@@ -9,7 +9,6 @@ Innar Liiv
 
 "ms2my" - MSSQL to MySQL converter
 ==================================
-http://ms2my.sourceforge.net
 
 ```
   "ms2my" is free software; you can redistribute it and/or modify
@@ -51,7 +50,7 @@ http://ms2my.sourceforge.net
 INSTALLATION INSTRUCTIONS IN THE FILE CALLED "INSTALL".
 
 README.
-=======
+-------
 
 What is ms2my all about and why was it written?
 -----------------------------------------------
@@ -79,7 +78,7 @@ P.S. If ODBC (w/ or w/o FreeTDS) connection development will some day be more ef
 rewritten - but until that - have fun :-)
 
 BUGS
-====
+----
 
 While reporting bugs, please keep in mind that the algorithm of dumping is running the queries:
 1) DESC (tablename) (actually sp_columns (tablename) but the conversion will be done on the fly)
