@@ -1,0 +1,40 @@
+1) Setting up FreeTDS (www.freetds.org)
+
+(more information from http://www.freetds.org/userguide/x1564.htm)
+
+1.1) first build FreeTDS normally. 
+
+$ ./configure --prefix=/usr/local/freetds
+$ make
+$ su root
+Password: 
+$ make install
+
+1.2) configure the freetds.conf
+[ms2my]
+host =  192.168.0.1
+port = 1433
+(you can use the tds version here also as told in the freetds sample conf file, but for SQL2000 it worked anyway)
+
+2) Setting up PHP
+
+2.1) Build PHP with support for "Sybase" 
+$ cd php
+$ ./configure --with-sybase=/usr/local/freetds
+$ make
+$ su root
+Password: 
+$ make install
+
+In the "ms2my" you have to change this section:
+
+$conf=Array("servername"=>"ms2my",
+            "username"=>"(your MSSQL username here)",
+            "password"=>"(your password here)");
+
+Modify also the first line of "ms2my" to point to the right location of php executable, to test
+whether everything works you should try an example:
+
+ms2my [DATABASE NAME] "SHOW TABLES"
+
+And that's it!

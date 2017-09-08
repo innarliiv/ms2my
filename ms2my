@@ -1,0 +1,410 @@
+#!/usr/local/bin/php  -qc
+
+<?
+set_time_limit(0);
+$start_time=doubleval(ereg_replace('^0\.([0-9]*) ([0-9]*)$','\\2.\\1',microtime()));
+
+/*
+  "ms2my" - MSSQL to MySQL converter (version 0.15-beta)
+  https://github.com/innarliiv/ms2my
+
+  0.15-beta
+  Welcome to new developers James Puddicombe and Lluis Pamies!
+  - slight changes in command line arguments - now possible to choose a database (instead of default)
+  - better error reporting and logging of the process
+  - handling zero-length column results correctly
+  - handling PM times between 12:00PM and 12:59PM
+  - "get only updates" feature, which is VERY experimental at the
+    moment and should only be used with very special attention :-)
+
+  0.1-alpha (by Innar Liiv)
+  - Initial release
+
+  "ms2my" is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 2 of the License, or
+  (at your option) any later version.
+
+  "ms2my" is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with "ms2my"; if not, write to the Free Software
+  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+*/
+
+/*
+  Requires:
+  1) cgi-version of PHP compiled with FreeTDS (www.freetds.org)
+  2) FreeTDS configured for the specific MSSQL connection
+
+*/
+
+
+// ----------------------------------------------------------------------
+// CHANGE HERE
+
+$conf=Array("servername"=>"",
+            "username"=>"",
+            "password"=>"");
+
+// DO NOT CHANGE AFTER THIS LINE IF YOU DON'T KNOW WHAT YOU ARE DOING :-)
+// ----------------------------------------------------------------------
+
+ini_set ( "mssql.batchsize", 10 ) ;
+ini_set ( "mssql.textsize", 4096 ) ;
+ini_set ( "mssql.textlimit", 4096 ) ;
+ini_set ( "max_execution_time", 3000 ) ;
+ini_set ( "max_input_time", 6000 ) ;
+ini_set ( "memory_limit", "250000000" ) ;
+
+function debug_report($report) { // writing a log
+  $f=fopen("ms2my.log","a"); fwrite($f,$report."\n"); fclose($f);
+}
+
+function show_structure($table) {
+  global $db1;
+  
+  $res = sybase_query("sp_columns $table",$db1) or die(debug_report("Failed to run Query.\n $query \n"));
+
+  echo "# Drop table '".$table."'\n";
+  echo "DROP TABLE IF EXISTS ".$table.";\n";
+  echo "# Data structure for table '".$table."'\n";
+  echo "CREATE TABLE ".$table." (\n";
+  while ($arr = sybase_fetch_row($res)) {
+    $prec=$arr[6];
+    $scale=$arr[8];
+    if ($arr[3]=="smallmoney") { $prec=10;$scale=4; }
+    if ($arr[3]=="money") { $prec=19;$scale=4; }
+    if ($arr[3]=="show") { $arr[3]="showTitle"; }
+//echo "Field Name = ".$arr[3]."\tData Type = ".$arr[5]."\tField Size = ".$arr[7]."\n";
+    switch ($arr[5]) {
+      case "int":
+        $str.=$arr[3]." INT,\n";
+        break;
+      case "bit":
+        $str.=$arr[3]." TINYINT,\n";
+        break;
+      case "smallint":
+        $str.=$arr[3]." SMALLINT,\n";
+        break;
+      case "nvarchar":
+      case "varchar":
+        $str.=$arr[3]." ";
+        if ($arr[7]<255) {
+          $str.="VARCHAR (".$arr[6]."),\n";
+        } Else {
+          $str.="TEXT,\n";
+        }
+        break;
+      case "char":
+        $str.=$arr[3]." ";
+        if ($arr[7]<255) {
+          $str.="CHAR (".$arr[6]."),\n";
+        } Else {
+          $str.="TEXT";
+        }
+        break;
+      case"ntext":
+      case"text":
+        $str.=$arr[3]." ";
+          $str.="TEXT,\n";
+        break;
+      case "uniqueidentifier":
+        $str.=$arr[3]." ";
+          $str.="CHAR(36) NOT NULL,\n";
+        break;
+      case "binary":
+      case "varbinary":
+      case "image":
+        $str.= $arr[5];
+	$str.=$arr[3]." BLOB,\n";
+        break;
+      case "datetime":
+      case "smalldatetime":
+        $str.=$arr[3]." DATETIME,\n";
+        break;
+      case "timestamp":
+        $str.=$arr[3]." TIMESTAMP,\n";
+        break;
+      case "float":
+        $str.=$arr[3]." DOUBLE,\n";
+        break;
+      case "real":
+        $str.=$arr[3]." FLOAT,\n";
+        break;
+      case "numeric":
+      case "decimal":
+      case "money":
+      case "smallmoney":
+        $str.=$arr[3]." DECIMAL(".$prec.",".$scale."),\n";
+        break;
+      default:
+        $str.=$arr[3]." ".$arr[5]."(".$arr[6]."),\n";
+        break;
+    }
+  }
+  $str=substr($str, 0, -2); // last comma off
+  $str.=");\n";
+  sybase_free_result($res);
+  return $str;
+}
+
+function get_columnNames($table){
+  global $db1;
+
+  $res = sybase_query("sp_columns $table",$db1) or die(debug_report("Failed to run Query.\n $query \n"));
+
+  while ($arr = sybase_fetch_row($res)) {
+
+  	if($arr[5] == "uniqueidentifier")
+	  	$str = $str . "CAST(" . $arr[3] . " AS nvarchar(255)) AS " . $arr[3] . " ,";
+	elseif($arr[5] == "timestamp")
+	  	$str = $str . "CAST(" . $arr[3] . " AS datetime) AS " . $arr[3] . " ,";
+	elseif($arr[5] == "text" || $arr[5] == "ntext")
+	  	$str = $str . "LEFT(CAST(" . $arr[3] . " AS VARCHAR(100)),100) AS " . $arr[3] . " ,";
+  	else
+	  	$str = $str . $arr[3] . " ,";
+  }
+  $str=substr($str, 0, -2); // last comma off
+  sybase_free_result($res);
+  //echo $str ."\n"; //Debugging
+  return $str;
+}
+
+//Find out the which column is the Primary key in the Table
+function get_pKeys($table){
+  global $db1;
+
+  $res = sybase_query("sp_pkeys $table",$db1) or die(debug_report("Failed to run Query.\n $query \n"));
+
+  while ($arr = sybase_fetch_row($res)) {
+	  	$str = $arr[3] ;
+  }
+  sybase_free_result($res);
+  return $str;
+}
+//Find out the which column is the Primary key in the Table
+function get_datatype($table,$ColumnName){
+  global $db1;
+
+  $res = sybase_query("sp_columns @table_name =$table , @column_name =$ColumnName",$db1) or die(debug_report("Failed to run Query.\n $query \n"));
+
+  while ($arr = sybase_fetch_row($res)) {
+	  	$str = $arr[4] ;
+  }
+  sybase_free_result($res);
+  return $str;
+}
+
+
+function get_updates($table, $NoOfDays){
+  // NB! This function is very pre-alpha :-)
+  // Only works if the source table has fields "createdon" and "modifiedon"
+  global $db1;
+  $UpdateCounter=0;
+  $InsertCounter=0;
+
+  $res = sybase_query("sp_columns $table",$db1) or die(debug_report("Failed to run Query.\n $query \n"));
+  while ($arr = sybase_fetch_row($res)) { $datatypes[($arr[16]-1)]=$arr[5]; }
+  sybase_free_result($res);
+
+  //Check that the number of days is numeric
+  if (!is_numeric($NoOfDays) ) {$NoOfDays = 10;}
+
+  //Set the update date to today minus $NoOfDays
+  $updateTime = mktime (date("H")  ,date("i")  ,date("s")  ,date("m")  ,date("d")-$NoOfDays ,date("Y"));
+  $updateDate =  date("Y-m-d H:i:s", $updateTime);
+
+  $query = "SELECT ". get_columnNames($table) ." FROM $table Where (ModifiedOn > '$updateDate' OR createdON > '$updateDate');";
+
+  $res = sybase_query($query,$db1) or die(debug_report("Failed to run Query.\n $query \n"));
+    if (! $res) { return; }
+  echo "# Data in the table '".$table."'\n";
+  while ($arr = sybase_fetch_row($res)) {
+
+    //Check to see if the we are doing an Insert or an Update
+	$createdOn = strtotime($arr[2]) ;
+	if (  $updateTime < mktime (date("H", $createdOn)  ,date("i", $createdOn)  ,date("s", $createdOn)  ,date("m", $createdOn)  ,date("d", $createdOn) ,date("Y", $createdOn)))
+    {
+	     echo "DELETE FROM $table WHERE ID='$arr[0]'; \n";
+ 		 //Increment the UpdateCounter
+		 $UpdateCounter++;
+    }
+	else{	
+	    // Write out insert statement
+		$InsertCounter++;
+	}
+
+    // Write out insert statement
+	echo writeout_insert($arr,$datatypes,$table);
+  }
+  sybase_free_result($res);
+	//Write the Statistics to thelog
+	debug_report("# Report on the table ".$table);
+	debug_report("# Inserts = ".$InsertCounter);
+	debug_report("# Updates = ".$UpdateCounter);
+	debug_report("# Total   = ".$UpdateCounter + $InsertCounter);
+	debug_report("");
+}
+
+function writeout_insert($arr,$datatypes, $table){
+	//echo "MOO";
+   //Write out the Insert statement
+     $str="INSERT INTO $table VALUES (";
+    for ($i=0;$i<count($arr);$i++) {
+      if ($datatypes[$i]=="datetime") { $arr[$i]=convert_date($arr[$i]);}
+
+      if ($datatypes[$i]!="int") {      $str.="'"; } 
+	  
+	  	if($datatypes[$i]=="int" && strlen($arr[$i])==0)
+			{$str.=0;}
+		else
+	    	{$str.= addslashes($arr[$i]);}
+
+      if ($datatypes[$i]!="int") {      $str.="'"; }
+
+	  $str .= ",";
+    }
+    $str=substr($str, 0, -1); // last comma off
+    $str.=");\n";
+    return $str;
+}
+
+
+
+
+function show_data($table) {
+  global $db1;
+  $InsertCounter=0;
+
+  $res = sybase_query("sp_columns $table",$db1) or die(debug_report("Failed to run Query.\n $query \n"));
+  while ($arr = sybase_fetch_row($res)) { $datatypes[($arr[16]-1)]=$arr[5]; }
+  sybase_free_result($res);
+  //echo get_columnNames($table) . "\n";
+  $query = "SELECT ". get_columnNames($table) ." FROM $table;";
+//  $query = "SELECT ". get_columnNames($table) ." FROM $table WHERE contentElementId=1644131;";
+
+  $res = sybase_query($query,$db1) or die(debug_report("Failed to run Query.\n $query \n"));
+
+  echo "# Data in the table '".$table."'\n";
+  while ($arr = sybase_fetch_row($res)) {
+
+	echo writeout_insert($arr,$datatypes,$table);
+	$InsertCounter++;
+
+  }
+  sybase_free_result($res);
+	//Write the Statistics to thelog
+	debug_report("# Report on the table ".$table);
+	debug_report("# Total   = ". $InsertCounter);
+}
+
+// Quick hack i wrote for my date conversion - maybe it worked only at my case, let's hope not :-)
+
+function convert_date($date) {
+  $temp=explode(" ",$date);
+  $month=Array("Jan"=>1,"Feb"=>2,"Mar"=>3,"Apr"=>4,"May"=>5,"Jun"=>6,
+  "Jul"=>7,"Aug"=>8,"Sep"=>9,"Oct"=>10,"Nov"=>11,"Dec"=>12);
+//  if (substr($temp[3],-2)=="PM") {
+  if (substr($temp[3],-2)=="PM")  {
+// JP 16/1/2004 - correction - don't add 12 to PM times if they begin with '12'
+    $temp[3]=(substr($temp[3],0,2)+((substr($temp[3],0,2)<12)?12:0)).substr($temp[3],2,-2);
+  }
+  if (substr($temp[3],-2)=="AM") {
+    $temp[3]=substr($temp[3],0,-2);
+  }
+  if ($temp[2]=="" || $temp[0]=="" || $temp[1]=="") { return; }
+  return $temp[2]."-".$month["$temp[0]"]."-".$temp[1]." ".$temp[3].":00";
+
+}
+
+if ($_SERVER["argc"]!=2 && $_SERVER["argc"]!=3 && $_SERVER["argc"]!=4 && $_SERVER["argc"]!=5) {
+	echo "Usage:\nms2my DATABASE \"your-query-here\" --format=table(default)|csv]\n";
+	echo "OR\n"."ms2my DATABASE  \"TABLE[,TABLE2,TABLE3..]\" [--mysqldump=all(default)|structure|data|largedata|update [No of Days to Update]]\n";
+} Else {
+	
+	$database=$_SERVER["argv"][1];
+	$query=$_SERVER["argv"][2];
+	$parameter=$_SERVER["argv"][3];
+	if ($query=="SHOW TABLES") { $query="sp_tables"; }
+	$query=str_replace("DESC","sp_columns",$query);
+	if (substr($parameter,0,9)=="--format=") { $format=substr($parameter,9); }
+	
+	$db1=sybase_connect($conf["servername"],$conf["username"],$conf["password"]);
+	sybase_select_db($database,$db1) or DIE(debug_report("Failed to switch to Database. $database \n"));
+	
+	if (substr($parameter,0,11)!="--mysqldump") {
+		$res = sybase_query($query,$db1) or die(debug_report("Failed to run Query.\n $query \n"));
+	
+		$q=0;
+		while ($arr = sybase_fetch_row($res)) {
+		  for ($i=0;$i<count($arr);$i++) {
+			$data[$q][$i]=$arr[$i];
+			if (strlen($arr[$i])>$len[$i]) { $len[$i]=strlen($arr[$i]); }
+		  }
+		  $q++;
+		}
+	
+		if ($format=="csv") {
+		  for ($i=0;$i<count($data);$i++) {
+// JP 16/1/2004 - correction
+//			for ($j=0;$j<count($len);$j++) {
+			for ($j=0;$j<count($data[$i]);$j++) {
+			  echo $data[$i][$j].",";
+			}
+			echo "\n";
+		  }
+		} Else {
+// JP 16/1/2004 - correction
+		  for ($i=0;$i<count($data[0]);$i++) { echo "+".str_repeat("-",$len[$i]); }
+		  echo "+\n";
+		  for ($i=0;$i<count($data);$i++) {
+// JP 16/1/2004 - correction
+//			for ($j=0;$j<count($len);$j++) {
+			for ($j=0;$j<count($data[$i]);$j++) {
+			  echo "|";
+			  echo $data[$i][$j];
+			  echo str_repeat(" ",($len[$j]-strlen($data[$i][$j])));
+			}
+			echo "|\n";
+		  }
+// JP 16/1/2004 - correction
+		  for ($i=0;$i<count($data[0]);$i++) { echo "+".str_repeat("-",$len[$i]); }
+		  echo "+\n";
+		}
+	} Else {
+	$tables=explode(",",$_SERVER["argv"][2]);
+	echo "# ms2my.sourceforge.net was used to make this dump.\n";
+
+	for ($i=0;$i<count($tables);$i++) {
+	  switch(substr($parameter,12)) {
+		case "structure":
+		  echo show_structure($tables[$i]);
+		  break;
+		case "data":
+		  echo show_data($tables[$i]);
+		  break;
+		case "largedata":
+		  echo show_structure($tables[$i]);echo show_large_data($tables[$i]);
+		  break;
+		case "update":
+		  echo get_updates($tables[$i], $_SERVER["argv"][4]);
+		  break;
+		default: // both - data & structure
+		  echo show_structure($tables[$i]);echo show_data($tables[$i]);
+		  break;
+	  }
+	}
+	}
+	// JP 16/1/2004 - correction
+	//Close the connection
+	sybase_close($db1);
+
+}
+	$end_time=number_format((doubleval(ereg_replace('^0\.([0-9]*) ([0-9]*)$','\\2.\\1',microtime()))-$start_time),3);
+	debug_report("# ms2my was running for $end_time seconds.\n");
+
+?>
