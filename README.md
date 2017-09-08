@@ -50,7 +50,7 @@ Innar Liiv
 INSTALLATION INSTRUCTIONS IN THE FILE CALLED "INSTALL".
 
 README.
--------
+=======
 
 What is ms2my all about and why was it written?
 -----------------------------------------------
@@ -68,8 +68,7 @@ but constantly replicate the information from MSSQL to MYSQL. And because it was
 bit more universally (could have hard coded the tables and columns, u know..) - this little helping script was
 born.
 
-Simple as that - hope that does your work a bit easier next time. And if you want to contribute code also, please
-write drcrm@users.sourceforge.net.
+Simple as that - hope that does your work a bit easier next time. And if you want to contribute code also, please use github.
 
 Best regards,
 Innar Liiv
